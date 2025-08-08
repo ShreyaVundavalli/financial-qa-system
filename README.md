@@ -24,17 +24,18 @@ A sophisticated RAG-based system with intelligent agent orchestration for answer
 ### Setup
 1. **Clone the repository**
 git clone https://github.com/ShreyaVundavalli/financial-qa-system.git
+
 cd financial_qa_system
 
-2. **Set up environment**
+3. **Set up environment**
 chmod +x venv_setup.sh
 ./venv_setup.sh
 
-3. **Activate environment**
+4. **Activate environment**
 source venv/bin/activate
 
 
-4. **Configure your details**
+5. **Configure your details**
 - Edit `src/data_acquisition.py` line 12
 - Replace with your name and email: `'User-Agent': 'YourName youremail@domain.com'`
 
