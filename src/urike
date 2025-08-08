@@ -1,0 +1,1642 @@
+# import os
+# import re
+# import json
+# import numpy as np
+# from typing import List, Dict, Optional, Tuple, Any
+# from dataclasses import dataclass, asdict
+# from bs4 import BeautifulSoup
+# from sentence_transformers import SentenceTransformer
+# import tiktoken
+# from tqdm import tqdm
+# import faiss
+# from datetime import datetime
+
+# @dataclass
+# class RetrievalResult:
+#     """Clean result structure for RAG retrieval"""
+#     content: str
+#     company: str
+#     year: str
+#     section: str
+#     file_path: str
+#     similarity_score: float
+#     token_count: int
+#     chunk_id: int
+#     has_financial_data: bool
+#     financial_metrics: Dict[str, str]
+
+# class FinancialDataExtractor:
+#     """Extract financial metrics from text chunks"""
+    
+#     def __init__(self):
+#         self.financial_patterns = {
+#             'total_revenue': [
+#                 r'(?:total\s+)?revenues?\s+(?:were|was)?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'(?:total\s+)?revenue\s+of\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)'
+#             ],
+#             'operating_margin': [
+#                 r'operating\s+margin\s+(?:was|were)?\s*(\d+(?:\.\d+)?)\s*%',
+#                 r'operating\s+margin\s+of\s+(\d+(?:\.\d+)?)\s*%'
+#             ],
+#             'gross_margin': [
+#                 r'gross\s+margin\s+(?:was|were)?\s*(\d+(?:\.\d+)?)\s*%',
+#                 r'gross\s+margin\s+of\s+(\d+(?:\.\d+)?)\s*%'
+#             ],
+#             'net_income': [
+#                 r'net\s+income\s+(?:was|were)?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'net\s+income\s+of\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)'
+#             ],
+#             'rd_expense': [
+#                 r'research\s+and\s+development\s+(?:expenses?)?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'r&d\s+(?:expenses?)?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)'
+#             ],
+#             'cloud_revenue': [
+#                 r'(?:azure|intelligent\s+cloud|cloud)\s+revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'data\s+center\s+revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'google\s+cloud\s+revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)'
+#             ],
+#             'advertising_revenue': [
+#                 r'advertising\s+revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)',
+#                 r'google\s+advertising\s+revenues?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:million|billion)'
+#             ]
+#         }
+    
+#     def extract_financial_metrics(self, text: str) -> Dict[str, str]:
+#         """Extract financial metrics from text"""
+#         metrics = {}
+#         text_clean = re.sub(r'\s+', ' ', text.lower())
+        
+#         for metric_name, patterns in self.financial_patterns.items():
+#             for pattern in patterns:
+#                 matches = re.finditer(pattern, text_clean, re.IGNORECASE)
+#                 for match in matches:
+#                     value = match.group(1)
+#                     value = re.sub(r'[,\s]', '', value)
+#                     if value and value.replace('.', '').isdigit():
+#                         metrics[metric_name] = value
+#                         break
+#             if metric_name in metrics:
+#                 break
+        
+#         return metrics
+
+# class OptimizedFinancialRAGPipeline:
+#     """Optimized RAG Pipeline focused on quality retrieval"""
+    
+#     def __init__(self, chunk_size: int = 800, overlap: int = 100):
+#         self.chunk_size = chunk_size
+#         self.overlap = overlap
+        
+#         print("🤖 Loading optimized RAG pipeline...")
+#         print("🔄 Loading embedding model...")
+        
+#         self.model = SentenceTransformer('BAAI/bge-base-en-v1.5')
+#         self.embedding_dim = self.model.get_sentence_embedding_dimension()
+#         self.index = faiss.IndexFlatIP(self.embedding_dim)
+#         self.chunks = []
+#         self.financial_extractor = FinancialDataExtractor()
+        
+#         try:
+#             self.tokenizer = tiktoken.get_encoding("cl100k_base")
+#         except Exception:
+#             self.tokenizer = None
+        
+#         # Focus on most important sections
+#         self.key_sections = {
+#             'md_a': r"(?i)(?:item\s+7|management['’]s\s+discussion\s+and\s+analysis)",
+#             'financial_statements': r'(?i)(?:item\s+8|financial\s+statements)',
+#             'revenue': r'(?i)revenue',
+#             'cloud': r'(?i)(?:cloud|azure|intelligent\s+cloud)',
+#             'ai': r'(?i)(?:artificial\s+intelligence|machine\s+learning|ai)'
+#         }
+        
+#         print(f"✅ Pipeline ready - Target: {chunk_size} tokens with {overlap} overlap")
+
+#     def count_tokens(self, text: str) -> int:
+#         if self.tokenizer:
+#             return len(self.tokenizer.encode(text))
+#         else:
+#             return max(1, int(len(text.split()) * 1.3))
+
+#     def extract_text_from_filing(self, file_path: str) -> str:
+#         """Extract and clean text from SEC filing"""
+#         if not os.path.exists(file_path):
+#             return ""
+        
+#         try:
+#             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+#                 content = f.read()
+            
+#             if file_path.endswith(('.htm', '.html')):
+#                 soup = BeautifulSoup(content, 'html.parser')
+#                 for element in soup(['script', 'style', 'meta', 'link']):
+#                     element.decompose()
+#                 text = soup.get_text()
+#             else:
+#                 text = content
+            
+#             return self._clean_text(text)
+            
+#         except Exception as e:
+#             print(f"❌ Error extracting text from {file_path}: {e}")
+#             return ""
+
+#     def _clean_text(self, text: str) -> str:
+#         """Clean text while preserving financial context"""
+#         # Basic whitespace normalization
+#         text = re.sub(r'\n\s*\n+', '\n\n', text)
+#         text = re.sub(r'[ \t]{2,}', ' ', text)
+        
+#         # Fix encoding
+#         text = re.sub(r'[\u201C-\u201F]', '"', text)
+#         text = re.sub(r'[\u2018-\u201B]', "'", text)
+#         text = re.sub(r'[\u2013\u2014]', '-', text)
+        
+#         # Preserve financial formatting
+#         text = re.sub(r'\$\s+([0-9])', r'$\1', text)
+#         text = re.sub(r'([0-9])\s+(million|billion)', r'\1 \2', text)
+        
+#         return text.strip()
+
+#     def create_quality_chunks(self, text: str, company: str, year: str, file_path: str) -> List[RetrievalResult]:
+#         """Create high-quality, focused chunks"""
+#         chunks = []
+        
+#         # Find key sections first
+#         sections = self._find_key_sections(text)
+        
+#         if not sections:
+#             # If no sections found, treat as general content
+#             sections = [('general', 0, len(text))]
+        
+#         for section_name, start, end in sections:
+#             section_text = text[start:end]
+#             section_chunks = self._chunk_section(section_text, section_name, company, year, file_path)
+#             chunks.extend(section_chunks)
+        
+#         # Quality filter: only keep chunks with good content
+#         quality_chunks = []
+#         for chunk in chunks:
+#             if self._is_quality_chunk(chunk.content):
+#                 quality_chunks.append(chunk)
+        
+#         print(f"{company} {year}: Created {len(quality_chunks)} quality chunks from {len(chunks)} total")
+#         return quality_chunks
+
+#     def _find_key_sections(self, text: str) -> List[Tuple[str, int, int]]:
+#         """Find important sections in the document"""
+#         sections = []
+#         all_matches = []
+        
+#         for section_name, pattern in self.key_sections.items():
+#             for match in re.finditer(pattern, text):
+#                 all_matches.append((section_name, match.start()))
+        
+#         # Sort by position
+#         all_matches.sort(key=lambda x: x[1])
+        
+#         # Create sections with boundaries
+#         for i, (section_name, start) in enumerate(all_matches):
+#             end = all_matches[i + 1][1] if i + 1 < len(all_matches) else len(text)
+#             # Only include substantial sections
+#             if end - start > 1000:
+#                 sections.append((section_name, start, end))
+        
+#         return sections
+
+#     def _chunk_section(self, section_text: str, section_name: str, company: str, year: str, file_path: str) -> List[RetrievalResult]:
+#         """Chunk a section into optimal pieces"""
+#         chunks = []
+        
+#         # Split into sentences for better boundaries
+#         sentences = re.split(r'(?<=[.!?])\s+', section_text)
+        
+#         current_chunk = "" 
+#         current_tokens = 0
+        
+#         for sentence in sentences:
+#             sentence = sentence.strip()
+#             if not sentence:
+#                 continue
+            
+#             sentence_tokens = self.count_tokens(sentence)
+            
+#             # If adding this sentence exceeds limit, save current chunk
+#             if current_tokens + sentence_tokens > self.chunk_size and current_chunk:
+#                 if current_tokens >= 200:  # Minimum useful chunk size
+#                     chunk = self._create_chunk(current_chunk, section_name, company, year, file_path, len(chunks))
+#                     chunks.append(chunk)
+                
+#                 # Start new chunk with overlap if possible
+#                 current_chunk = sentence
+#                 current_tokens = sentence_tokens
+#             else:
+#                 current_chunk += " " + sentence if current_chunk else sentence
+#                 current_tokens += sentence_tokens
+        
+#         # Handle final chunk
+#         if current_chunk and current_tokens >= 200:
+#             chunk = self._create_chunk(current_chunk, section_name, company, year, file_path, len(chunks))
+#             chunks.append(chunk)
+        
+#         return chunks
+
+#     def _create_chunk(self, content: str, section: str, company: str, year: str, file_path: str, chunk_id: int) -> RetrievalResult:
+#         """Create a RetrievalResult object"""
+#         financial_metrics = self.financial_extractor.extract_financial_metrics(content)
+#         has_financial_data = bool(financial_metrics) or self._has_financial_keywords(content)
+        
+#         return RetrievalResult(
+#             content=content.strip(),
+#             company=company,
+#             year=year,
+#             section=section,
+#             file_path=file_path,
+#             similarity_score=0.0,
+#             token_count=self.count_tokens(content),
+#             chunk_id=chunk_id,
+#             has_financial_data=has_financial_data,
+#             financial_metrics=financial_metrics
+#         )
+
+#     def _is_quality_chunk(self, content: str) -> bool:
+#         """Check if chunk is worth keeping"""
+#         content_lower = content.lower()
+        
+#         # Skip boilerplate
+#         skip_patterns = [
+#             'forward-looking statements', 'safe harbor', 'trademark',
+#             'copyright', 'exhibit', 'signature', 'table of contents'
+#         ]
+        
+#         for pattern in skip_patterns:
+#             if pattern in content_lower:
+#                 return False
+        
+#         # Must have some substance
+#         if len(content.split()) < 50:
+#             return False
+        
+#         # Prefer chunks with financial content
+#         financial_keywords = ['revenue', 'income', 'margin', 'profit', 'growth', 'cloud', 'ai', '$']
+#         has_financial = any(keyword in content_lower for keyword in financial_keywords)
+        
+#         # Must have either financial content or be from key section
+#         return has_financial or any(char.isdigit() for char in content)
+
+#     def _has_financial_keywords(self, text: str) -> bool:
+#         """Check for financial keywords"""
+#         keywords = [
+#             'revenue', 'income', 'margin', 'profit', 'earnings',
+#             'cloud', 'ai', 'growth', 'million', 'billion', '$'
+#         ]
+#         text_lower = text.lower()
+#         return any(keyword in text_lower for keyword in keywords)
+
+#     def build_vector_store(self):
+#         """Build optimized vector store"""
+#         if not self.chunks:
+#             print("❌ No chunks to embed!")
+#             return
+        
+#         print(f"🔄 Creating embeddings for {len(self.chunks)} chunks...")
+#         chunk_texts = [chunk.content for chunk in self.chunks]
+        
+#         # Process in smaller batches for stability
+#         batch_size = 32
+#         all_embeddings = []
+        
+#         for i in tqdm(range(0, len(chunk_texts), batch_size), desc="Embedding batches"):
+#             batch_texts = chunk_texts[i:i + batch_size]
+#             batch_embeddings = self.model.encode(
+#                 batch_texts,
+#                 show_progress_bar=False,
+#                 normalize_embeddings=True
+#             )
+#             all_embeddings.append(batch_embeddings)
+        
+#         # Combine all embeddings
+#         embeddings = np.vstack(all_embeddings)
+        
+#         # Build index
+#         self.index = faiss.IndexFlatIP(self.embedding_dim)
+#         self.index.add(embeddings.astype(np.float32))
+        
+#         print(f"✅ Built vector store with {len(self.chunks)} chunks")
+
+#     def retrieve(self, query: str, top_k: int = 5, 
+#                  company_filter: Optional[str] = None,
+#                  year_filter: Optional[str] = None) -> List[RetrievalResult]:
+#         """Retrieve relevant chunks"""
+#         if not self.chunks:
+#             return []
+        
+#         # Get query embedding
+#         query_embedding = self.model.encode([query], normalize_embeddings=True)
+        
+#         # Search
+#         search_k = min(top_k * 3, len(self.chunks))
+#         similarities, indices = self.index.search(
+#             query_embedding.astype(np.float32),
+#             search_k
+#         )
+        
+#         results = []
+#         for i, idx in enumerate(indices[0]):
+#             if idx < len(self.chunks):
+#                 chunk = self.chunks[idx]
+                
+#                 # Apply filters
+#                 if company_filter and chunk.company.upper() != company_filter.upper():
+#                     continue
+#                 if year_filter and str(chunk.year) != str(year_filter):
+#                     continue
+                
+#                 # Update similarity score
+#                 chunk.similarity_score = float(similarities[0][i])
+#                 results.append(chunk)
+        
+#         # Sort by score and return top results
+#         results.sort(key=lambda x: x.similarity_score, reverse=True)
+#         return results[:top_k]
+
+#     def process_all_filings(self, input_dir: str = "data/raw_filings") -> Dict:
+#         """Process all filings efficiently"""
+#         print(f"🔄 Processing SEC filings from {input_dir}")
+        
+#         summary_path = os.path.join(input_dir, "download_summary.json")
+#         if not os.path.exists(summary_path):
+#             print(f"❌ Download summary not found at {summary_path}")
+#             return {}
+        
+#         with open(summary_path, 'r') as f:
+#             download_summary = json.load(f)
+        
+#         stats = {
+#             'files_processed': 0,
+#             'files_failed': 0,
+#             'total_chunks': 0,
+#             'companies': set(),
+#             'years': set(),
+#             'financial_chunks': 0,
+#         }
+        
+#         for file_info in tqdm(download_summary, desc="Processing filings"):
+#             try:
+#                 file_path = file_info['file_path']
+#                 company = file_info['company']
+#                 year = file_info['year']
+                
+#                 text = self.extract_text_from_filing(file_path)
+#                 if not text or len(text.strip()) < 1000:
+#                     stats['files_failed'] += 1
+#                     continue
+                
+#                 chunks = self.create_quality_chunks(text, company, year, file_path)
+#                 if not chunks:
+#                     stats['files_failed'] += 1
+#                     continue
+                
+#                 self.chunks.extend(chunks)
+#                 stats['files_processed'] += 1
+#                 stats['total_chunks'] += len(chunks)
+#                 stats['companies'].add(company)
+#                 stats['years'].add(year)
+#                 stats['financial_chunks'] += sum(1 for chunk in chunks if chunk.has_financial_data)
+                
+#             except Exception as e:
+#                 print(f"❌ Error processing {file_info.get('company', 'Unknown')}: {e}")
+#                 stats['files_failed'] += 1
+        
+#         # Build vector store
+#         if self.chunks:
+#             self.build_vector_store()
+        
+#         stats['companies'] = list(stats['companies'])
+#         stats['years'] = list(stats['years'])
+        
+#         print(f"\n📊 Processing Summary:")
+#         print(f"   Files processed: {stats['files_processed']}")
+#         print(f"   Total chunks: {stats['total_chunks']}")
+#         print(f"   Financial chunks: {stats['financial_chunks']} ({stats['financial_chunks']/stats['total_chunks']*100:.1f}%)")
+#         print(f"   Companies: {', '.join(stats['companies'])}")
+#         print(f"   Years: {', '.join(stats['years'])}")
+        
+#         return stats
+
+#     def save_pipeline(self, save_dir: str = "data/processed"):
+#         """Save the pipeline"""
+#         os.makedirs(save_dir, exist_ok=True)
+        
+#         # Save chunks metadata
+#         chunks_data = {
+#             'chunks': [asdict(chunk) for chunk in self.chunks],
+#             'config': {
+#                 'chunk_size': self.chunk_size,
+#                 'overlap': self.overlap,
+#                 'total_chunks': len(self.chunks)
+#             }
+#         }
+        
+#         with open(os.path.join(save_dir, "chunks.json"), 'w') as f:
+#             json.dump(chunks_data, f, indent=2)
+        
+#         # Save vector index
+#         faiss.write_index(self.index, os.path.join(save_dir, "faiss.index"))
+        
+#         print(f"💾 Pipeline saved to {save_dir}")
+
+
+# def create_sample_data():
+#     """Create sample SEC filing data"""
+#     os.makedirs("data/raw_filings", exist_ok=True)
+    
+#     download_summary = [
+#         {"company": "GOOGL", "year": "2022", "file_path": "data/raw_filings/googl_2022.txt"},
+#         {"company": "GOOGL", "year": "2023", "file_path": "data/raw_filings/googl_2023.txt"},
+#         {"company": "GOOGL", "year": "2024", "file_path": "data/raw_filings/googl_2024.txt"},
+#         {"company": "MSFT", "year": "2022", "file_path": "data/raw_filings/msft_2022.txt"},
+#         {"company": "MSFT", "year": "2023", "file_path": "data/raw_filings/msft_2023.txt"},
+#         {"company": "MSFT", "year": "2024", "file_path": "data/raw_filings/msft_2024.txt"},
+#         {"company": "NVDA", "year": "2022", "file_path": "data/raw_filings/nvda_2022.txt"},
+#         {"company": "NVDA", "year": "2023", "file_path": "data/raw_filings/nvda_2023.txt"},
+#         {"company": "NVDA", "year": "2024", "file_path": "data/raw_filings/nvda_2024.txt"},
+#     ]
+    
+#     with open("data/raw_filings/download_summary.json", 'w') as f:
+#         json.dump(download_summary, f, indent=2)
+    
+#     # Realistic financial content
+#     sample_contents = {
+#         "GOOGL": {
+#             "2023": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION AND RESULTS OF OPERATIONS
+
+# Revenue
+
+# Our total revenues were $307.4 billion in 2023, compared to $282.8 billion in 2022, an increase of $24.6 billion or 9%.
+
+# Google advertising revenues were $237.9 billion in 2023, compared to $224.5 billion in 2022. Google advertising revenues represent 77% of our total revenues in 2023.
+
+# Google Cloud revenues were $33.1 billion in 2023, compared to $26.3 billion in 2022, an increase of $6.8 billion or 26%.
+
+# YouTube advertising revenues were $31.5 billion in 2023, compared to $28.8 billion in 2022.
+
+# Operating Performance
+
+# Operating margin was 29.8% in 2023, compared to 28.7% in 2022.
+
+# Cost of revenues was $133.3 billion in 2023, compared to $126.2 billion in 2022.
+
+# Research and development expenses were $39.5 billion in 2023, representing 12.9% of total revenues.
+
+# ARTIFICIAL INTELLIGENCE
+# We continue to make significant investments in artificial intelligence and machine learning across all our products. Our AI capabilities enhance search, cloud services, and advertising effectiveness.
+#             """,
+#             "2022": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS
+
+# Total revenues were $282.8 billion in 2022, compared to $257.6 billion in 2021.
+
+# Google advertising revenues were $224.5 billion in 2022, representing 79% of total revenues.
+
+# Google Cloud revenues were $26.3 billion in 2022, an increase of 37% from 2021.
+
+# Operating margin was 28.7% in 2022.
+
+# Research and development expenses were $39.5 billion in 2022.
+#             """,
+#         },
+#         "MSFT": {
+#             "2023": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS
+
+# Total revenue was $211.9 billion in fiscal year 2023, compared to $198.3 billion in fiscal year 2022, an increase of $13.6 billion or 7%.
+
+# Intelligent Cloud segment revenue was $87.9 billion in fiscal year 2023, compared to $75.3 billion in fiscal year 2022, representing 41% of total revenue.
+
+# Azure and other cloud services revenue increased 27% in fiscal year 2023.
+
+# More Personal Computing segment revenue was $54.7 billion in fiscal year 2023.
+
+# Productivity and Business Processes segment revenue was $69.3 billion in fiscal year 2023.
+
+# Operating Performance
+
+# Operating margin was 42.1% in fiscal year 2023, compared to 41.5% in fiscal year 2022.
+
+# Gross margin was 69.8% in fiscal year 2023.
+
+# Research and development expenses were $27.2 billion in fiscal year 2023, representing 12.8% of total revenue.
+
+# ARTIFICIAL INTELLIGENCE
+# We are investing significantly in artificial intelligence capabilities across our product portfolio. Azure AI services continue to see strong enterprise adoption, and we are integrating AI across Microsoft 365, Dynamics, and other platforms.
+#             """,
+#             "2022": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS
+
+# Total revenue was $198.3 billion in fiscal year 2022, an increase of 18% compared to fiscal year 2021.
+
+# Intelligent Cloud revenue was $75.3 billion in fiscal year 2022, representing 38% of total revenue.
+
+# Azure revenue growth was 40% in fiscal year 2022.
+
+# Operating margin was 41.5% in fiscal year 2022.
+
+# Research and development expenses were $24.5 billion in fiscal year 2022.
+#             """,
+#         },
+#         "NVDA": {
+#             "2023": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS
+
+# Total revenue was $60.9 billion in fiscal 2023, compared to $26.9 billion in fiscal 2022, an increase of 126%.
+
+# Data Center revenue was $47.5 billion in fiscal 2023, compared to $15.0 billion in fiscal 2022, an increase of 217%. Data Center revenue represents 78% of total revenue.
+
+# Gaming revenue was $10.4 billion in fiscal 2023, compared to $12.5 billion in fiscal 2022.
+
+# Professional Visualization revenue was $1.5 billion in fiscal 2023.
+
+# Automotive revenue was $1.0 billion in fiscal 2023.
+
+# Operating Performance
+
+# Gross margin was 73.0% in fiscal 2023, compared to 64.9% in fiscal 2022.
+
+# Operating margin was 32.9% in fiscal 2023, compared to 13.4% in fiscal 2022.
+
+# Research and development expenses were $7.3 billion in fiscal 2023, representing 12.0% of total revenue.
+
+# ARTIFICIAL INTELLIGENCE
+# The adoption of accelerated computing and generative AI is driving unprecedented demand for our data center products. Our AI platforms are being adopted across industries for both training and inference workloads.
+#             """,
+#             "2022": """
+# ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS
+
+# Total revenue was $26.9 billion in fiscal 2022, compared to $24.5 billion in fiscal 2021.
+
+# Data Center revenue was $15.0 billion in fiscal 2022, an increase of 83%.
+
+# Gaming revenue was $12.5 billion in fiscal 2022.
+
+# Operating margin was 13.4% in fiscal 2022.
+
+# Research and development expenses were $5.3 billion in fiscal 2022.
+#             """,
+#         }
+#     }
+    
+#     # Write sample files
+#     for company, years_data in sample_contents.items():
+#         for year, content in years_data.items():
+#             file_path = f"data/raw_filings/{company.lower()}_{year}.txt"
+#             with open(file_path, 'w') as f:
+#                 f.write(content)
+    
+#     print("✅ Created sample data")
+
+
+# def test_optimized_rag():
+#     """Test the optimized RAG pipeline"""
+#     print("🚀 Testing Optimized Financial RAG Pipeline\n")
+    
+#     # Create sample data if needed
+#     if not os.path.exists("data/raw_filings/download_summary.json"):
+#         create_sample_data()
+    
+#     # Initialize pipeline
+#     rag = OptimizedFinancialRAGPipeline(chunk_size=800, overlap=100)
+    
+#     # Process filings
+#     stats = rag.process_all_filings()
+    
+#     if stats.get('total_chunks', 0) == 0:
+#         print("❌ No chunks created!")
+#         return None
+    
+#     # Test queries
+#     test_queries = [
+#         "What was Microsoft's total revenue in 2023?",
+#         "What percentage of Google's 2023 revenue came from advertising?",
+#         "How much did Microsoft's cloud revenue grow from 2022 to 2023?",
+#         "Which company had the highest operating margin in 2023?",
+#         "What was NVIDIA's data center revenue in 2023?"
+#     ]
+    
+#     print("\n" + "="*60)
+#     print("🧪 TESTING RAG RETRIEVAL")
+#     print("="*60)
+    
+#     for query in test_queries:
+#         print(f"\n🔍 Query: {query}")
+#         print("-" * 40)
+        
+#         results = rag.retrieve(query, top_k=3)
+        
+#         print(f"📊 Found {len(results)} results:")
+#         for i, result in enumerate(results, 1):
+#             print(f"\n{i}. {result.company} {result.year} ({result.section})")
+#             print(f"   Score: {result.similarity_score:.3f}")
+#             print(f"   Financial metrics: {result.financial_metrics}")
+#             print(f"   Content preview: {result.content[:200]}...")
+    
+#     # Save pipeline
+#     rag.save_pipeline()
+    
+#     return rag
+
+
+# if __name__ == "__main__":
+#     test_optimized_rag()
+    
+
+
+
+
+
+# import os
+# import re
+# import json
+# import numpy as np
+# from typing import List, Dict, Tuple, Optional
+# import tiktoken
+# from bs4 import BeautifulSoup
+# from sentence_transformers import SentenceTransformer
+# import faiss
+# from tqdm import tqdm
+
+
+# class EnhancedFinancialRAGPipeline:
+#     def __init__(self, chunk_size: int = 800, overlap: int = 100):
+#         """
+#         Enhanced Financial RAG Pipeline optimized for SEC filings
+        
+#         Args:
+#             chunk_size: Target chunk size in tokens
+#             overlap: Token overlap between chunks for context preservation
+#         """
+#         self.chunk_size = chunk_size
+#         self.overlap = overlap
+        
+#         # Use a financial-domain optimized embedding model
+#         # all-mpnet-base-v2 is better for domain-specific content than all-MiniLM-L6-v2
+#         print("🤖 Loading embedding model (all-mpnet-base-v2)...")
+#         self.model = SentenceTransformer('all-mpnet-base-v2')
+#         self.embedding_dim = self.model.get_sentence_embedding_dimension()
+        
+#         # Initialize FAISS index for fast similarity search
+#         self.index = faiss.IndexFlatL2(self.embedding_dim)  # Inner product for cosine similarity
+        
+#         # Storage
+#         self.chunks = []
+#         self.metadata = []
+        
+#         # Tiktoken for accurate token counting
+#         try:
+#             self.tokenizer = tiktoken.get_encoding("cl100k_base")
+#         except Exception:
+#             print("⚠️  Tiktoken not available, using approximation")
+#             self.tokenizer = None
+        
+#         # Enhanced financial section patterns
+#         self.section_patterns = {
+#             'item_1': r'(?i)(?:^|\n)\s*item\s+1[.\s]*(?!a\b)(?:business|description)',
+#             'item_1a': r'(?i)(?:^|\n)\s*item\s+1a[.\s]*risk\s+factors',
+#             'item_2': r'(?i)(?:^|\n)\s*item\s+2[.\s]*properties',
+#             'item_3': r'(?i)(?:^|\n)\s*item\s+3[.\s]*legal\s+proceedings',
+#             # FIX: Escape the single quote properly in regex for item_7
+#             'item_7': r'(?i)(?:^|\n)\s*item\s+7[.\s]*management[\'’]?s\s+discussion\s+and\s+analysis',
+#             'item_8': r'(?i)(?:^|\n)\s*item\s+8[.\s]*financial\s+statements',
+#             'item_9': r'(?i)(?:^|\n)\s*item\s+9[.\s]*controls\s+and\s+procedures',
+#             'item_10': r'(?i)(?:^|\n)\s*item\s+10[.\s]*directors',
+#         }
+        
+#         # Financial keywords for better chunking
+#         self.financial_keywords = {
+#             'revenue': r'(?i)\b(?:revenue[s]?|net\s+sales?|total\s+revenue)\b',
+#             'margin': r'(?i)\b(?:operating\s+margin|gross\s+margin|profit\s+margin|margin[s]?)\b',
+#             'income': r'(?i)\b(?:net\s+income|operating\s+income|income\s+from\s+operations)\b',
+#             'growth': r'(?i)\b(?:growth|increase[sd]?|decrease[sd]?|change[sd]?)\b',
+#             'segment': r'(?i)\b(?:segment[s]?|division[s]?|business\s+unit[s]?)\b',
+#             'ai_ml': r'(?i)\b(?:artificial\s+intelligence|machine\s+learning|AI|deep\s+learning|neural\s+network[s]?)\b',
+#             'cloud': r'(?i)\b(?:cloud|azure|aws|google\s+cloud|gcp)\b',
+#             'datacenter': r'(?i)\b(?:data\s+center[s]?|datacenter[s]?)\b'
+#         }
+        
+#         print(f"✅ Initialized Enhanced Financial RAG Pipeline")
+#         print(f"📏 Chunk size: {chunk_size} tokens with {overlap} token overlap")
+    
+#     def count_tokens(self, text: str) -> int:
+#         """Accurate token counting using tiktoken"""
+#         if self.tokenizer:
+#             return len(self.tokenizer.encode(text))
+#         else:
+#             # Fallback approximation
+#             return int(len(text.split()) * 1.3)
+    
+#     def extract_text_from_filing(self, file_path: str) -> str:
+#         """
+#         Enhanced text extraction specifically for SEC filings
+#         Handles HTML, removes boilerplate, focuses on narrative content
+#         """
+#         if not os.path.exists(file_path):
+#             print(f"❌ File not found: {file_path}")
+#             return ""
+#         try:
+#             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+#                 content = f.read()
+#             soup = BeautifulSoup(content, 'html.parser')
+#             for element in soup(['script', 'style', 'table', 'img', 'meta', 'link']):
+#                 element.decompose()
+#             text = soup.get_text()
+#             text = self._clean_sec_filing_text(text)
+#             return text
+#         except Exception as e:
+#             print(f"❌ Error extracting text from {file_path}: {e}")
+#             return ""
+    
+#     def _clean_sec_filing_text(self, text: str) -> str:
+#         """Advanced cleaning specifically for SEC filings"""
+        
+#         # Remove SEC boilerplate headers
+#         text = re.sub(r'<SEC-DOCUMENT>.*?</SEC-DOCUMENT>', '', text, flags=re.DOTALL)
+#         text = re.sub(r'<SEC-HEADER>.*?</SEC-HEADER>', '', text, flags=re.DOTALL)
+#         text = re.sub(r'<DOCUMENT>.*?<TYPE>.*?</DOCUMENT>', '', text, flags=re.DOTALL)
+        
+#         # Remove XBRL and XML comments
+#         text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+#         text = re.sub(r'<\?xml.*?\?>', '', text, flags=re.DOTALL)
+        
+#         # Remove HTML/XML tags
+#         text = re.sub(r'<[^>]+>', '', text)
+        
+#         # Remove excessive whitespace
+#         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+#         text = re.sub(r'[ \t]{2,}', ' ', text)
+        
+#         # Remove page headers and footers
+#         text = re.sub(r'(?i)table\s+of\s+contents.*?\n', '', text)
+#         text = re.sub(r'\n\s*\d+\s*\n', '\n', text)  # Page numbers
+#         text = re.sub(r'(?i)(?:^|\n)\s*page\s+\d+.*?\n', '\n', text)
+        
+#         # Clean up SEC-specific patterns
+#         text = re.sub(r'(?i)(?:^|\n)\s*\d{4}\s+form\s+10-k.*?\n', '\n', text)
+#         text = re.sub(r'(?i)(?:^|\n)\s*united\s+states.*?securities.*?commission.*?\n', '\n', text)
+        
+#         # Normalize quotes and special characters
+#         text = re.sub(r'[\u201C\u201D\u201E\u201F\u2033\u2036]', '"', text)
+#         text = re.sub(r'[\u2018\u2019\u201A\u201B\u2032\u2035]', "'", text)
+#         text = re.sub(r'[\u2013\u2014\u2015]', '-', text)
+#         text = re.sub(r'\u2026', '...', text)
+        
+#         # Remove remaining artifacts
+#         text = re.sub(r'(?i)(?:^|\n)\s*(?:filename|sequence|type|description):\s*.*?\n', '\n', text)
+        
+#         return text.strip()
+    
+#     def _identify_section(self, text: str, position: int = 0) -> str:
+#         """Identify which SEC filing section this text belongs to"""
+        
+#         # Check recent text (look back for section headers)
+#         check_text = text[max(0, position-2000):position+500].lower()
+        
+#         for section_name, pattern in self.section_patterns.items():
+#             if re.search(pattern, check_text):
+#                 return section_name
+        
+#         # Check for financial content patterns
+#         if re.search(self.financial_keywords['revenue'], check_text):
+#             return 'revenue_discussion'
+#         elif re.search(self.financial_keywords['margin'], check_text):
+#             return 'margin_analysis'
+#         elif re.search(self.financial_keywords['ai_ml'], check_text):
+#             return 'ai_strategy'
+#         elif re.search(self.financial_keywords['cloud'], check_text):
+#             return 'cloud_business'
+        
+#         return 'general'
+    
+#     def _has_financial_content(self, text: str) -> bool:
+#         """Check if chunk contains substantial financial information"""
+#         financial_indicators = 0
+        
+#         # Dollar amounts
+#         financial_indicators += len(re.findall(r'\$[\d,]+(?:\.\d{1,2})?(?:\s*(?:million|billion|thousand))?', text, re.IGNORECASE))
+        
+#         # Percentages
+#         financial_indicators += len(re.findall(r'\d+\.?\d*%', text))
+        
+#         # Financial keywords
+#         for keyword_pattern in self.financial_keywords.values():
+#             financial_indicators += len(re.findall(keyword_pattern, text))
+        
+#         return financial_indicators >= 3
+    
+#     def create_smart_chunks(self, text: str, company: str, year: str, file_path: str) -> List[Dict]:
+#         """
+#         Create semantically meaningful chunks with overlap for context preservation
+#         """
+#         chunks = []
+        
+#         # Detect important sections first
+#         sections = self._detect_financial_sections(text)
+        
+#         # Split text into paragraphs first
+#         paragraphs = re.split(r'\n\s*\n', text)
+        
+#         current_chunk = ""
+#         current_tokens = 0
+#         current_section = "general"
+        
+#         for para in paragraphs:
+#             if not para.strip():
+#                 continue
+            
+#             # Check if this paragraph starts a new section
+#             para_section = self._identify_section(para, sections)
+            
+#             para_tokens = self.count_tokens(para)
+            
+#             # If adding this paragraph would exceed chunk size
+#             if current_tokens + para_tokens > self.chunk_size and current_chunk:
+#                 # Save current chunk
+#                 chunk_data = self._create_chunk_metadata(
+#                     current_chunk, company, year, file_path, current_section
+#                 )
+#                 chunks.append(chunk_data)
+                
+#                 # Start new chunk
+#                 current_chunk = para
+#                 current_tokens = para_tokens
+#                 current_section = para_section
+#             else:
+#                 # Add to current chunk
+#                 if current_chunk:
+#                     current_chunk += " " + para
+#                 else:
+#                     current_chunk = para
+#                 current_tokens += para_tokens
+                
+#                 # Update section if we found a more specific one
+#                 if para_section != "general":
+#                     current_section = para_section
+        
+#         # Don't forget the last chunk
+#         if current_chunk:
+#             chunk_data = self._create_chunk_metadata(
+#                 current_chunk, company, year, file_path, current_section
+#             )
+#             chunks.append(chunk_data)
+        
+#         return chunks
+    
+#     def _detect_financial_sections(self, text):
+#         """Detect important financial sections in the document"""
+#         sections = {}
+        
+#         for section_name, pattern in self.financial_sections.items():
+#             matches = []
+#             for match in re.finditer(pattern, text):
+#                 matches.append((match.start(), match.end()))
+#             sections[section_name] = matches
+        
+#         return sections
+    
+#     def _is_financial_table(self, chunk):
+#         """Detect if a chunk contains financial tables/data"""
+#         # Look for patterns common in financial tables
+#         patterns = [
+#             r'\$[\d,]+(?:\.\d{2})?',  # Dollar amounts
+#             r'\(\$?[\d,]+(?:\.\d{2})?\)',  # Parenthetical amounts (losses)
+#             r'\d{1,3}(?:,\d{3})*%',  # Percentages
+#             r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2}',  # Dates
+#             r'\d+\.\d+%',  # Decimal percentages
+#         ]
+        
+#         financial_indicators = 0
+#         for pattern in patterns:
+#             financial_indicators += len(re.findall(pattern, chunk))
+        
+#         return financial_indicators >= 3  # Threshold for "financial" content
+    
+#     def smart_chunking(self, text, company, year, file_path):
+#         """Advanced chunking that preserves financial context"""
+#         chunks_data = []
+        
+#         # Detect important sections first
+#         sections = self._detect_financial_sections(text)
+        
+#         # Split text into paragraphs first
+#         paragraphs = re.split(r'\n\s*\n', text)
+        
+#         current_chunk = ""
+#         current_tokens = 0
+#         current_section = "general"
+        
+#         for para in paragraphs:
+#             if not para.strip():
+#                 continue
+            
+#             # Check if this paragraph starts a new section
+#             para_section = self._identify_section(para, sections)
+            
+#             para_tokens = self.count_tokens(para)
+            
+#             # If adding this paragraph would exceed chunk size
+#             if current_tokens + para_tokens > self.chunk_size and current_chunk:
+#                 # Save current chunk
+#                 chunk_data = self._create_chunk_metadata(
+#                     current_chunk, company, year, file_path, current_section
+#                 )
+#                 chunks_data.append(chunk_data)
+                
+#                 # Start new chunk
+#                 current_chunk = para
+#                 current_tokens = para_tokens
+#                 current_section = para_section
+#             else:
+#                 # Add to current chunk
+#                 if current_chunk:
+#                     current_chunk += "\n\n" + para
+#                 else:
+#                     current_chunk = para
+#                 current_tokens += para_tokens
+                
+#                 # Update section if we found a more specific one
+#                 if para_section != "general":
+#                     current_section = para_section
+        
+#         # Don't forget the last chunk
+#         if current_chunk:
+#             chunk_data = self._create_chunk_metadata(
+#                 current_chunk, company, year, file_path, current_section
+#             )
+#             chunks_data.append(chunk_data)
+        
+#         return chunks_data
+    
+#     def _identify_section(self, paragraph, sections):
+#         """Identify which section this paragraph belongs to"""
+#         para_lower = paragraph.lower()
+        
+#         # Check for section headers
+#         if re.search(self.financial_sections['item_7'], para_lower):
+#             return "item_7_mda"
+#         elif re.search(self.financial_sections['item_8'], para_lower):
+#             return "item_8_financials"
+#         elif re.search(self.financial_sections['item_1a'], para_lower):
+#             return "item_1a_risks"
+#         elif re.search(self.financial_sections['revenue'], para_lower):
+#             return "revenue_discussion"
+#         elif re.search(self.financial_sections['operating_margin'], para_lower):
+#             return "margins_discussion"
+#         elif re.search(self.financial_sections['ai_mentions'], para_lower):
+#             return "ai_strategy"
+        
+#         return "general"
+    
+#     def _create_chunk_metadata(self, chunk, company, year, file_path, section):
+#         """Create comprehensive metadata for a chunk"""
+#         is_financial_table = self._is_financial_table(chunk)
+#         token_count = self.count_tokens_simple(chunk)
+        
+#         # Extract key financial metrics if present
+#         financial_metrics = self._extract_financial_metrics(chunk)
+        
+#         return {
+#             'content': chunk,
+#             'company': company,
+#             'year': year,
+#             'file_path': file_path,
+#             'section': section,
+#             'is_financial_table': is_financial_table,
+#             'token_count': token_count,
+#             'financial_metrics': financial_metrics,
+#             'chunk_id': len(self.chunks)  # Will be updated when added
+#         }
+    
+#     def _extract_financial_metrics(self, chunk):
+#         """Extract financial metrics mentioned in the chunk"""
+#         metrics = {
+#             'revenue_amounts': [],
+#             'percentages': [],
+#             'dollar_amounts': [],
+#             'dates': []
+#         }
+        
+#         # Find revenue amounts
+#         revenue_pattern = r'revenue[s]?\s+(?:of\s+|was\s+)?\$?([\d,]+(?:\.\d+)?)\s*(?:billion|million|thousand)?'
+#         metrics['revenue_amounts'] = re.findall(revenue_pattern, chunk, re.IGNORECASE)
+        
+#         # Find percentages
+#         percentage_pattern = r'([\d,]+\.?\d*)%'
+#         metrics['percentages'] = re.findall(percentage_pattern, chunk)
+        
+#         # Find dollar amounts
+#         dollar_pattern = r'\$([\d,]+(?:\.\d+)?)\s*(?:billion|million|thousand)?'
+#         metrics['dollar_amounts'] = re.findall(dollar_pattern, chunk)
+        
+#         # Find dates
+#         date_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2}'
+#         metrics['dates'] = re.findall(date_pattern, chunk, re.IGNORECASE)
+        
+#         return metrics
+    
+#     def build_vector_store(self):
+#         """Create embeddings and build vector store"""
+#         print("🔄 Creating embeddings...")
+        
+#         if not self.chunks:
+#             print("❌ No chunks to embed!")
+#             return
+        
+#         chunk_texts = [chunk['content'] for chunk in self.chunks]
+        
+#         if self.use_tfidf:
+#             # Use TF-IDF
+#             print("📊 Using TF-IDF vectorization...")
+#             self.embeddings_matrix = self.vectorizer.fit_transform(chunk_texts)
+#             print(f"✅ Built TF-IDF vector store with {len(self.chunks)} chunks")
+#         else:
+#             # Use sentence transformers
+#             print("🤖 Using SentenceTransformers...")
+#             embeddings = self.model.encode(chunk_texts, show_progress_bar=True, batch_size=32)
+#             self.index.add(np.array(embeddings, dtype=np.float32))
+#             print(f"✅ Built vector store with {len(self.chunks)} chunks")
+    
+#     def retrieve(self, query, top_k=5, filter_company=None, filter_year=None, filter_section=None):
+#         """Retrieve relevant chunks with optional filtering"""
+#         if not self.chunks:
+#             print("❌ No chunks available for retrieval!")
+#             return []
+        
+#         if self.use_tfidf:
+#             # TF-IDF based retrieval
+#             query_vector = self.vectorizer.transform([query])
+#             similarities = cosine_similarity(query_vector, self.embeddings_matrix).flatten()
+            
+#             # Get top indices
+#             top_indices = similarities.argsort()[-top_k*3:][::-1]  # Get more for filtering
+            
+#             # Create results
+#             results = []
+#             for idx in top_indices:
+#                 if idx < len(self.chunks):
+#                     result = self.chunks[idx].copy()
+#                     result['similarity_score'] = float(similarities[idx])
+#                     results.append(result)
+#         else:
+#             # Sentence transformer based retrieval
+#             query_embedding = self.model.encode([query])
+#             distances, indices = self.index.search(
+#                 np.array(query_embedding, dtype=np.float32), 
+#                 min(top_k * 3, len(self.chunks))
+#             )
+            
+#             results = []
+#             for i, idx in enumerate(indices[0]):
+#                 if idx < len(self.chunks):
+#                     result = self.chunks[idx].copy()
+#                     result['similarity_score'] = float(1 / (1 + distances[0][i]))
+#                     results.append(result)
+        
+#         # Apply filters
+#         if filter_company:
+#             results = [r for r in results if r['company'].upper() == filter_company.upper()]
+        
+#         if filter_year:
+#             results = [r for r in results if r['year'] == str(filter_year)]
+        
+#         if filter_section:
+#             results = [r for r in results if filter_section.lower() in r['section'].lower()]
+        
+#         # Return top_k results after filtering
+#         return results[:top_k]
+    
+#     def process_all_filings(self, input_dir="data/raw_filings"):
+#         """Process all downloaded SEC filings"""
+#         print(f"🔄 Processing filings from {input_dir}")
+        
+#         stats = {
+#             'files_processed': 0,
+#             'files_failed': 0,
+#             'total_chunks': 0,
+#             'companies': set(),
+#             'years': set()
+#         }
+        
+#         # Read the download summary to know which files exist
+#         summary_path = os.path.join(input_dir, "download_summary.json")
+#         if os.path.exists(summary_path):
+#             with open(summary_path, 'r') as f:
+#                 download_summary = json.load(f)
+            
+#             for file_info in download_summary:
+#                 file_path = file_info['file_path']
+#                 company = file_info['company']
+#                 year = file_info['year']
+                
+#                 print(f"📄 Processing {company} {year}...")
+                
+#                 try:
+#                     # Extract text
+#                     text = self.extract_text_from_file(file_path)
+                    
+#                     if text:
+#                         # Smart chunking
+#                         chunk_data_list = self.smart_chunking(text, company, year, file_path)
+                        
+#                         # Add chunks to our storage
+#                         for chunk_data in chunk_data_list:
+#                             chunk_data['chunk_id'] = len(self.chunks)
+#                             self.chunks.append(chunk_data)
+                        
+#                         stats['files_processed'] += 1
+#                         stats['total_chunks'] += len(chunk_data_list)
+#                         stats['companies'].add(company)
+#                         stats['years'].add(year)
+                        
+#                         print(f"✅ {company} {year}: {len(chunk_data_list)} chunks created")
+#                     else:
+#                         print(f"⚠️  {company} {year}: No text extracted")
+#                         stats['files_failed'] += 1
+                        
+#                 except Exception as e:
+#                     print(f"❌ Error processing {company} {year}: {e}")
+#                     stats['files_failed'] += 1
+#         else:
+#             print(f"❌ Download summary not found at {summary_path}")
+#             return stats
+        
+#         # Build vector store
+#         if self.chunks:
+#             self.build_vector_store()
+        
+#         # Convert sets to lists for JSON serialization
+#         stats['companies'] = list(stats['companies'])
+#         stats['years'] = list(stats['years'])
+        
+#         print(f"\n📊 Processing Complete:")
+#         print(f"   Files processed: {stats['files_processed']}")
+#         print(f"   Files failed: {stats['files_failed']}")
+#         print(f"   Total chunks: {stats['total_chunks']}")
+#         print(f"   Companies: {', '.join(stats['companies'])}")
+#         print(f"   Years: {', '.join(stats['years'])}")
+        
+#         return stats
+    
+#     def save_pipeline(self, save_dir="data/processed"):
+#         """Save the pipeline for later use"""
+#         os.makedirs(save_dir, exist_ok=True)
+        
+#         # Save chunks and metadata
+#         with open(os.path.join(save_dir, "chunks_metadata.json"), 'w') as f:
+#             json.dump(self.chunks, f, indent=2)
+        
+#         if self.use_tfidf:
+#             # Save TF-IDF vectorizer and embeddings
+#             import pickle
+#             with open(os.path.join(save_dir, "tfidf_vectorizer.pkl"), 'wb') as f:
+#                 pickle.dump(self.vectorizer, f)
+#             with open(os.path.join(save_dir, "tfidf_embeddings.pkl"), 'wb') as f:
+#                 pickle.dump(self.embeddings_matrix, f)
+#         else:
+#             # Save FAISS index
+#             faiss.write_index(self.index, os.path.join(save_dir, "faiss_index.bin"))
+        
+#         print(f"💾 Pipeline saved to {save_dir}")
+
+# # Demo/Test function
+# def test_rag_pipeline():
+#     """Test the RAG pipeline with sample queries"""
+#     rag = FinancialRAGPipeline(use_tfidf=True)  # Use TF-IDF by default
+    
+#     # Process all filings
+#     stats = rag.process_all_filings()
+    
+#     if stats['total_chunks'] == 0:
+#         print("❌ No chunks created, cannot test retrieval")
+#         return
+    
+#     # Test queries
+#     test_queries = [
+#         "What was Microsoft's total revenue in 2023?",
+#         "NVIDIA data center revenue growth",
+#         "Google cloud revenue percentage",
+#         "Operating margins comparison",
+#         "AI investment strategy"
+#     ]
+    
+#     print("\n🔍 Testing Retrieval:")
+#     for query in test_queries:
+#         print(f"\n📝 Query: {query}")
+#         results = rag.retrieve(query, top_k=3)
+        
+#         for i, result in enumerate(results, 1):
+#             print(f"   {i}. {result['company']} {result['year']} ({result['section']})")
+#             print(f"      Score: {result['similarity_score']:.3f}")
+#             print(f"      Preview: {result['content'][:100]}...")
+    
+#     # Save the pipeline
+#     rag.save_pipeline()
+    
+#     return rag
+
+# if __name__ == "__main__":
+#     test_rag_pipeline()
+#             if file_path.endswith(('.htm', '.html')):
+#                 soup = BeautifulSoup(content, 'html.parser')
+                
+#                 # Remove script and style elements
+#                 for script in soup(["script", "style"]):
+#                     script.decompose()
+                
+#                 text = soup.get_text()
+#             else:
+#                 # For .txt files, use as-is
+#                 text = content
+            
+#             # Clean the text
+#             text = self._clean_text(text)
+#             return text
+            
+#         except Exception as e:
+#             print(f"❌ Error extracting text from {file_path}: {e}")
+#             return ""
+    
+#     def _clean_text(self, text):
+#         """Clean and normalize text"""
+#         # Remove excessive whitespace
+#         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+#         text = re.sub(r' {3,}', ' ', text)
+#         text = re.sub(r'\t+', ' ', text)
+        
+#         # Remove page headers/footers (common SEC patterns)
+#         text = re.sub(r'Table of Contents.*?\n', '', text, flags=re.IGNORECASE)
+#         text = re.sub(r'\n\s*\d+\s*\n', '\n', text)  # Page numbers
+        
+#         # Normalize quotes and dashes using Unicode code points
+#         text = re.sub(r'[\u201C\u201D]', '"', text)  # Smart double quotes
+#         text = re.sub(r'[\u2018\u2019]', "'", text)  # Smart single quotes  
+#         text = re.sub(r'[\u2014\u2013]', '-', text)  # Em dash and en dash
+        
+#         return text.strip()
+    
+#     def _detect_financial_sections(self, text):
+#         """Detect important financial sections in the document"""
+#         sections = {}
+        
+#         for section_name, pattern in self.financial_sections.items():
+#             matches = []
+#             for match in re.finditer(pattern, text):
+#                 matches.append((match.start(), match.end()))
+#             sections[section_name] = matches
+        
+#         return sections
+    
+#     def _is_financial_table(self, chunk):
+#         """Detect if a chunk contains financial tables/data"""
+#         # Look for patterns common in financial tables
+#         patterns = [
+#             r'\$[\d,]+(?:\.\d{2})?',  # Dollar amounts
+#             r'\(\$?[\d,]+(?:\.\d{2})?\)',  # Parenthetical amounts (losses)
+#             r'\d{1,3}(?:,\d{3})*%',  # Percentages
+#             r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2}',  # Dates
+#             r'\d+\.\d+%',  # Decimal percentages
+#         ]
+        
+#         financial_indicators = 0
+#         for pattern in patterns:
+#             financial_indicators += len(re.findall(pattern, chunk))
+        
+#         return financial_indicators >= 3  # Threshold for "financial" content
+    
+#     def smart_chunking(self, text, company, year, file_path):
+#         """Advanced chunking that preserves financial context"""
+#         chunks_data = []
+        
+#         # Detect important sections first
+#         sections = self._detect_financial_sections(text)
+        
+#         # Split text into paragraphs first
+#         paragraphs = re.split(r'\n\s*\n', text)
+        
+#         current_chunk = ""
+#         current_tokens = 0
+#         current_section = "general"
+        
+#         for para in paragraphs:
+#             if not para.strip():
+#                 continue
+            
+#             # Check if this paragraph starts a new section
+#             para_section = self._identify_section(para, sections)
+            
+#             para_tokens = self.count_tokens_simple(para)
+            
+#             # If adding this paragraph would exceed chunk size
+#             if current_tokens + para_tokens > self.chunk_size and current_chunk:
+#                 # Save current chunk
+#                 chunk_data = self._create_chunk_metadata(
+#                     current_chunk, company, year, file_path, current_section
+#                 )
+#                 chunks_data.append(chunk_data)
+                
+#                 # Start new chunk
+#                 current_chunk = para
+#                 current_tokens = para_tokens
+#                 current_section = para_section
+#             else:
+#                 # Add to current chunk
+#                 if current_chunk:
+#                     current_chunk += "\n\n" + para
+#                 else:
+#                     current_chunk = para
+#                 current_tokens += para_tokens
+                
+#                 # Update section if we found a more specific one
+#                 if para_section != "general":
+#                     current_section = para_section
+        
+#         # Don't forget the last chunk
+#         if current_chunk:
+#             chunk_data = self._create_chunk_metadata(
+#                 current_chunk, company, year, file_path, current_section
+#             )
+#             chunks_data.append(chunk_data)
+        
+#         return chunks_data
+    
+#     def _identify_section(self, paragraph, sections):
+#         """Identify which section this paragraph belongs to"""
+#         para_lower = paragraph.lower()
+        
+#         # Check for section headers
+#         if re.search(self.financial_sections['item_7'], para_lower):
+#             return "item_7_mda"
+#         elif re.search(self.financial_sections['item_8'], para_lower):
+#             return "item_8_financials"
+#         elif re.search(self.financial_sections['item_1a'], para_lower):
+#             return "item_1a_risks"
+#         elif re.search(self.financial_sections['revenue'], para_lower):
+#             return "revenue_discussion"
+#         elif re.search(self.financial_sections['operating_margin'], para_lower):
+#             return "margins_discussion"
+#         elif re.search(self.financial_sections['ai_mentions'], para_lower):
+#             return "ai_strategy"
+        
+#         return "general"
+    
+#     def _create_chunk_metadata(self, chunk, company, year, file_path, section):
+#         """Create comprehensive metadata for a chunk"""
+#         is_financial_table = self._is_financial_table(chunk)
+#         token_count = self.count_tokens_simple(chunk)
+        
+#         # Extract key financial metrics if present
+#         financial_metrics = self._extract_financial_metrics(chunk)
+        
+#         return {
+#             'content': chunk,
+#             'company': company,
+#             'year': year,
+#             'file_path': file_path,
+#             'section': section,
+#             'is_financial_table': is_financial_table,
+#             'token_count': token_count,
+#             'financial_metrics': financial_metrics,
+#             'chunk_id': len(self.chunks)  # Will be updated when added
+#         }
+    
+#     def _extract_financial_metrics(self, chunk):
+#         """Extract financial metrics mentioned in the chunk"""
+#         metrics = {
+#             'revenue_amounts': [],
+#             'percentages': [],
+#             'dollar_amounts': [],
+#             'dates': []
+#         }
+        
+#         # Find revenue amounts
+#         revenue_pattern = r'revenue[s]?\s+(?:of\s+|was\s+)?\$?([\d,]+(?:\.\d+)?)\s*(?:billion|million|thousand)?'
+#         metrics['revenue_amounts'] = re.findall(revenue_pattern, chunk, re.IGNORECASE)
+        
+#         # Find percentages
+#         percentage_pattern = r'([\d,]+\.?\d*)%'
+#         metrics['percentages'] = re.findall(percentage_pattern, chunk)
+        
+#         # Find dollar amounts
+#         dollar_pattern = r'\$([\d,]+(?:\.\d+)?)\s*(?:billion|million|thousand)?'
+#         metrics['dollar_amounts'] = re.findall(dollar_pattern, chunk)
+        
+#         # Find dates
+#         date_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2}'
+#         metrics['dates'] = re.findall(date_pattern, chunk, re.IGNORECASE)
+        
+#         return metrics
+    
+#     def build_vector_store(self):
+#         """Create embeddings and build vector store"""
+#         print("🔄 Creating embeddings...")
+        
+#         if not self.chunks:
+#             print("❌ No chunks to embed!")
+#             return
+        
+#         chunk_texts = [chunk['content'] for chunk in self.chunks]
+        
+#         if self.use_tfidf:
+#             # Use TF-IDF
+#             print("📊 Using TF-IDF vectorization...")
+#             self.embeddings_matrix = self.vectorizer.fit_transform(chunk_texts)
+#             print(f"✅ Built TF-IDF vector store with {len(self.chunks)} chunks")
+#         else:
+#             # Use sentence transformers
+#             print("🤖 Using SentenceTransformers...")
+#             embeddings = self.model.encode(chunk_texts, show_progress_bar=True, batch_size=32)
+#             self.index.add(np.array(embeddings, dtype=np.float32))
+#             print(f"✅ Built vector store with {len(self.chunks)} chunks")
+    
+#     def retrieve(self, query, top_k=5, filter_company=None, filter_year=None, filter_section=None):
+#         """Retrieve relevant chunks with optional filtering"""
+#         if not self.chunks:
+#             print("❌ No chunks available for retrieval!")
+#             return []
+        
+#         if self.use_tfidf:
+#             # TF-IDF based retrieval
+#             query_vector = self.vectorizer.transform([query])
+#             similarities = cosine_similarity(query_vector, self.embeddings_matrix).flatten()
+            
+#             # Get top indices
+#             top_indices = similarities.argsort()[-top_k*3:][::-1]  # Get more for filtering
+            
+#             # Create results
+#             results = []
+#             for idx in top_indices:
+#                 if idx < len(self.chunks):
+#                     result = self.chunks[idx].copy()
+#                     result['similarity_score'] = float(similarities[idx])
+#                     results.append(result)
+#         else:
+#             # Sentence transformer based retrieval
+#             query_embedding = self.model.encode([query])
+#             distances, indices = self.index.search(
+#                 np.array(query_embedding, dtype=np.float32), 
+#                 min(top_k * 3, len(self.chunks))
+#             )
+            
+#             results = []
+#             for i, idx in enumerate(indices[0]):
+#                 if idx < len(self.chunks):
+#                     result = self.chunks[idx].copy()
+#                     result['similarity_score'] = float(1 / (1 + distances[0][i]))
+#                     results.append(result)
+        
+#         # Apply filters
+#         if filter_company:
+#             results = [r for r in results if r['company'].upper() == filter_company.upper()]
+        
+#         if filter_year:
+#             results = [r for r in results if r['year'] == str(filter_year)]
+        
+#         if filter_section:
+#             results = [r for r in results if filter_section.lower() in r['section'].lower()]
+        
+#         # Return top_k results after filtering
+#         return results[:top_k]
+    
+#     def process_all_filings(self, input_dir="data/raw_filings"):
+#         """Process all downloaded SEC filings"""
+#         print(f"🔄 Processing filings from {input_dir}")
+        
+#         stats = {
+#             'files_processed': 0,
+#             'files_failed': 0,
+#             'total_chunks': 0,
+#             'companies': set(),
+#             'years': set()
+#         }
+        
+#         # Read the download summary to know which files exist
+#         summary_path = os.path.join(input_dir, "download_summary.json")
+#         if os.path.exists(summary_path):
+#             with open(summary_path, 'r') as f:
+#                 download_summary = json.load(f)
+            
+#             for file_info in download_summary:
+#                 file_path = file_info['file_path']
+#                 company = file_info['company']
+#                 year = file_info['year']
+                
+#                 print(f"📄 Processing {company} {year}...")
+                
+#                 try:
+#                     # Extract text
+#                     text = self.extract_text_from_file(file_path)
+                    
+#                     if text:
+#                         # Smart chunking
+#                         chunk_data_list = self.smart_chunking(text, company, year, file_path)
+                        
+#                         # Add chunks to our storage
+#                         for chunk_data in chunk_data_list:
+#                             chunk_data['chunk_id'] = len(self.chunks)
+#                             self.chunks.append(chunk_data)
+                        
+#                         stats['files_processed'] += 1
+#                         stats['total_chunks'] += len(chunk_data_list)
+#                         stats['companies'].add(company)
+#                         stats['years'].add(year)
+                        
+#                         print(f"✅ {company} {year}: {len(chunk_data_list)} chunks created")
+#                     else:
+#                         print(f"⚠️  {company} {year}: No text extracted")
+#                         stats['files_failed'] += 1
+                        
+#                 except Exception as e:
+#                     print(f"❌ Error processing {company} {year}: {e}")
+#                     stats['files_failed'] += 1
+#         else:
+#             print(f"❌ Download summary not found at {summary_path}")
+#             return stats
+        
+#         # Build vector store
+#         if self.chunks:
+#             self.build_vector_store()
+        
+#         # Convert sets to lists for JSON serialization
+#         stats['companies'] = list(stats['companies'])
+#         stats['years'] = list(stats['years'])
+        
+#         print(f"\n📊 Processing Complete:")
+#         print(f"   Files processed: {stats['files_processed']}")
+#         print(f"   Files failed: {stats['files_failed']}")
+#         print(f"   Total chunks: {stats['total_chunks']}")
+#         print(f"   Companies: {', '.join(stats['companies'])}")
+#         print(f"   Years: {', '.join(stats['years'])}")
+        
+#         return stats
+    
+#     def save_pipeline(self, save_dir="data/processed"):
+#         """Save the pipeline for later use"""
+#         os.makedirs(save_dir, exist_ok=True)
+        
+#         # Save chunks and metadata
+#         with open(os.path.join(save_dir, "chunks_metadata.json"), 'w') as f:
+#             json.dump(self.chunks, f, indent=2)
+        
+#         if self.use_tfidf:
+#             # Save TF-IDF vectorizer and embeddings
+#             import pickle
+#             with open(os.path.join(save_dir, "tfidf_vectorizer.pkl"), 'wb') as f:
+#                 pickle.dump(self.vectorizer, f)
+#             with open(os.path.join(save_dir, "tfidf_embeddings.pkl"), 'wb') as f:
+#                 pickle.dump(self.embeddings_matrix, f)
+#         else:
+#             # Save FAISS index
+#             faiss.write_index(self.index, os.path.join(save_dir, "faiss_index.bin"))
+        
+#         print(f"💾 Pipeline saved to {save_dir}")
+
+# # Demo/Test function
+# def test_rag_pipeline():
+#     """Test the RAG pipeline with sample queries"""
+#     rag = FinancialRAGPipeline(use_tfidf=True)  # Use TF-IDF by default
+    
+#     # Process all filings
+#     stats = rag.process_all_filings()
+    
+#     if stats['total_chunks'] == 0:
+#         print("❌ No chunks created, cannot test retrieval")
+#         return
+    
+#     # Test queries
+#     test_queries = [
+#         "What was Microsoft's total revenue in 2023?",
+#         "NVIDIA data center revenue growth",
+#         "Google cloud revenue percentage",
+#         "Operating margins comparison",
+#         "AI investment strategy"
+#     ]
+    
+#     print("\n🔍 Testing Retrieval:")
+#     for query in test_queries:
+#         print(f"\n📝 Query: {query}")
+#         results = rag.retrieve(query, top_k=3)
+        
+#         for i, result in enumerate(results, 1):
+#             print(f"   {i}. {result['company']} {result['year']} ({result['section']})")
+#             print(f"      Score: {result['similarity_score']:.3f}")
+#             print(f"      Preview: {result['content'][:100]}...")
+    
+#     # Save the pipeline
+#     rag.save_pipeline()
+    
+#     return rag
+
+# if __name__ == "__main__":
+#     test_rag_pipeline()
+
+
