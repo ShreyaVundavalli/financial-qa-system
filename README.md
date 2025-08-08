@@ -29,13 +29,14 @@ cd financial_qa_system
 
 3. **Set up environment**
 chmod +x venv_setup.sh
+
 ./venv_setup.sh
 
-4. **Activate environment**
+5. **Activate environment**
 source venv/bin/activate
 
 
-5. **Configure your details**
+6. **Configure your details**
 - Edit `src/data_acquisition.py` line 12
 - Replace with your name and email: `'User-Agent': 'YourName youremail@domain.com'`
 
