@@ -125,23 +125,25 @@ Check data status
     python src/diagnostic_check.py
 
 
-##  Project Structure
+## Project Structure
 
+```
 financial_qa_system/
 ├── src/
-│ ├── data_acquisition.py # SEC data extraction
-│ ├── rag_pipeline.py # Vector search & retrieval
-│ ├── agent.py # Query orchestration
-│ ├── main.py # Test framework & interface
-│ └── diagnostic_check.py # Data verification
+│   ├── data_acquisition.py     # SEC data extraction
+│   ├── rag_pipeline.py         # Vector search & retrieval
+│   ├── agent.py                # Query orchestration
+│   ├── main.py                 # Test framework & interface
+│   └── diagnostic_check.py     # Data verification
 ├── data/
-│ ├── rag_chunks.json # Processed chunks
-│ ├── sec_api/ # Raw SEC data
-│ └── narrative_text/ # Extracted narratives
-├── venv/ # Virtual environment
-├── requirements.txt # Dependencies
-├── venv_setup.sh # Setup script
-└── README.md # This file
+│   ├── rag_chunks.json         # Processed chunks
+│   ├── sec_api/                # Raw SEC data
+│   └── narrative_text/         # Extracted narratives
+├── venv/                       # Virtual environment
+├── requirements.txt            # Dependencies
+├── venv_setup.sh               # Setup script
+└── README.md                   # This file
+```
 
 
 
@@ -154,4 +156,4 @@ financial_qa_system/
 
 ---
 
-** Ready to explore financial data? Start with `python src/main.py --interactive`**
+ Ready to explore financial data? Start with `python src/main.py --interactive`
