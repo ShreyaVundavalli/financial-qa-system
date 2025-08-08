@@ -23,7 +23,7 @@ A sophisticated RAG-based system with intelligent agent orchestration for answer
 
 ### Setup
 1. **Clone the repository**
-git clone <your-repo-url>
+git clone https://github.com/ShreyaVundavalli/financial-qa-system.git
 cd financial_qa_system
 
 2. **Set up environment**
