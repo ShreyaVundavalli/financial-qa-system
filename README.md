@@ -28,6 +28,7 @@ git clone https://github.com/ShreyaVundavalli/financial-qa-system.git
 cd financial_qa_system
 
 3. **Set up environment**
+
 chmod +x venv_setup.sh
 
 ./venv_setup.sh
@@ -46,7 +47,9 @@ source venv/bin/activate
     python src/data_acquisition.py
 
 - Run comprehensive tests
-    python src/main.py
+  
+    python src/main.py (for 12 sample queries)
+  
     python src/main.py --interactive (Interactive Mode)
  
 
@@ -83,7 +86,7 @@ source venv/bin/activate
 2. **YoY Comparison**: Growth calculations → 100% success  
 3. **Cross-Company**: Comparative analysis → 100% success
 4. **Segment Analysis**: Percentage calculations → 100% success
-5. **Complex Multi-aspect**: Multi-dimensional analysis → 100% success
+5. **Complex Multi-aspect**: Multi-dimensional analysis → 75% success
 
 ##  Technical Details
 
