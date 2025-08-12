@@ -102,11 +102,17 @@ class SECAPIDataExtractor:
         return {
             ('MSFT', '2024'): 'https://www.sec.gov/Archives/edgar/data/789019/000095017024087843/msft-20240630.htm',
             ('MSFT', '2023'): 'https://www.sec.gov/Archives/edgar/data/789019/000095017023035122/msft-20230630.htm',
-            ('GOOGL', '2023'): 'https://www.sec.gov/Archives/edgar/data/1652044/000165204423000016/goog-20221231.htm',
+            ('MSFT', '2022'): 'https://www.sec.gov/Archives/edgar/data/789019/000156459022026876/msft-10k_20220630.htm',
+
             ('GOOGL', '2024'): 'https://www.sec.gov/Archives/edgar/data/1652044/000165204425000014/goog-20241231.htm',
+            ('GOOGL', '2023'): 'https://www.sec.gov/Archives/edgar/data/1652044/000165204424000022/goog-20231231.htm',
+            ('GOOGL', '2022'): 'https://www.sec.gov/Archives/edgar/data/1652044/000165204423000016/goog-20221231.htm',
+
             ('NVDA', '2024'): 'https://www.sec.gov/Archives/edgar/data/1045810/000104581024000029/nvda-20240128.htm',
-            ('NVDA', '2023'): 'https://www.sec.gov/Archives/edgar/data/1045810/000104581023000017/nvda-20230129.htm'
+            ('NVDA', '2023'): 'https://www.sec.gov/Archives/edgar/data/1045810/000104581023000017/nvda-20230129.htm',
+            ('NVDA', '2022'): 'https://www.sec.gov/Archives/edgar/data/1045810/000104581022000036/nvda-20220130.htm'
         }
+
 
     def extract_narrative_text(self, ticker: str, cik: str, accession: str, year: str) -> Dict[str, str]:
         """Extract using direct URLs first, then fallback to pattern matching"""
@@ -363,16 +369,14 @@ def main():
     # Step 3: Extract narrative text from 10-K filings
     print("\nStep 3: Extracting narrative text from 10-K filings...")
     narrative_data = {}
-    
-    for ticker, filings in filing_urls.items():
+
+    for ticker, cik in companies.items():
         narrative_data[ticker] = {}
-        cik = companies[ticker]
-        
-        for filing in filings[:2]:  # Limit to 2 most recent filings
-            year = filing['year']
-            accession = filing['accession']
-            
-            sections = extractor.extract_narrative_text(ticker, cik, accession, year)
+        for year in years:
+            # Always use direct URL for each (ticker, year)
+            sections = extractor.extract_narrative_text(
+                ticker, cik, accession="", year=year
+            )
             if sections:
                 narrative_data[ticker][year] = sections
     
@@ -402,154 +406,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-# import requests
-# import pandas as pd
-# import json
-# import os
-# from typing import Dict, List
-
-# class SECAPIDataExtractor:
-#     def __init__(self):
-#         # SEC requires User-Agent header - REPLACE WITH YOUR EMAIL
-#         self.headers = {
-#             'User-Agent': 'Shreya jiminipabo3130@gmail.com'  
-#         }
-#         self.base_url = "https://data.sec.gov/api/xbrl"
-        
-#     def get_company_facts(self, ticker_to_cik: Dict[str, str]) -> Dict:
-#         """Get all financial facts for companies using SEC's Company Facts API"""
-#         all_company_data = {}
-        
-#         for ticker, cik in ticker_to_cik.items():
-#             try:
-#                 # Pad CIK to 10 digits
-#                 cik_padded = cik.zfill(10)
-#                 url = f"{self.base_url}/companyfacts/CIK{cik_padded}.json"
-                
-#                 print(f"📥 Fetching {ticker} data from SEC API...")
-#                 response = requests.get(url, headers=self.headers)
-                
-#                 if response.status_code == 200:
-#                     data = response.json()
-#                     all_company_data[ticker] = data
-#                     print(f"✅ {ticker}: Retrieved {len(data.get('facts', {}))} fact categories")
-#                 else:
-#                     print(f"❌ {ticker}: Failed to get data (status: {response.status_code})")
-                    
-#             except Exception as e:
-#                 print(f"❌ Error fetching {ticker}: {e}")
-        
-#         return all_company_data
-    
-#     def save_raw_data(self, company_data: Dict, save_dir: str = "data/sec_api"):
-#         """Save raw SEC API data to files"""
-#         os.makedirs(save_dir, exist_ok=True)
-        
-#         for ticker, data in company_data.items():
-#             file_path = os.path.join(save_dir, f"{ticker}_company_facts.json")
-#             with open(file_path, 'w') as f:
-#                 json.dump(data, f, indent=2)
-#             print(f"💾 Saved {ticker} data to {file_path}")
-    
-#     def create_text_chunks_for_rag(self, company_data: Dict, years: List[str]) -> List[Dict]:
-#         """Convert structured SEC data into text chunks for RAG pipeline"""
-#         chunks = []
-        
-#         for ticker, data in company_data.items():
-#             facts = data.get('facts', {})
-            
-#             # Process each taxonomy (us-gaap, dei, etc.)
-#             for taxonomy_name, taxonomy_data in facts.items():
-#                 for metric_tag, metric_info in taxonomy_data.items():
-                    
-#                     # Get human-readable label
-#                     label = "Unknown Metric"
-#                     if 'label' in metric_info:
-#                         label = metric_info['label']
-                    
-#                     # Get USD values
-#                     usd_data = metric_info.get('units', {}).get('USD', [])
-                    
-#                     # Create chunks for each year
-#                     for fact in usd_data:
-#                         if fact.get('form') == '10-K':  # Only annual filings
-#                             year = str(fact.get('fy', ''))
-#                             value = fact.get('val', 0)
-                            
-#                             if year in years and value is not None:
-#                                 # Create natural language chunk
-#                                 chunk_text = f"{ticker} {year}: {label} was ${value:,} according to their 10-K filing."
-                                
-#                                 chunks.append({
-#                                     'content': chunk_text,
-#                                     'company': ticker,
-#                                     'year': year,
-#                                     'metric': metric_tag,
-#                                     'label': label,
-#                                     'value': value,
-#                                     'source': f"{ticker}_{year}_10K"
-#                                 })
-        
-#         print(f"📝 Created {len(chunks)} text chunks for RAG pipeline")
-#         return chunks
-    
-#     def save_chunks_for_rag(self, chunks: List[Dict], save_path: str = "data/rag_chunks.json"):
-#         """Save chunks in format compatible with RAG pipeline"""
-#         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
-#         with open(save_path, 'w') as f:
-#             json.dump(chunks, f, indent=2)
-        
-#         print(f"💾 Saved {len(chunks)} chunks to {save_path}")
-#         return save_path
-
-# def main():
-#     print("🚀 Starting SEC API Data Acquisition\n")
-    
-#     # Company CIK mappings 
-#     companies = {
-#         'MSFT': '789019',
-#         'GOOGL': '1652044', 
-#         'NVDA': '1045810'
-#     }
-    
-#     years = ['2022', '2023', '2024']
-    
-#     # Initialize extractor
-#     extractor = SECAPIDataExtractor()
-    
-#     # Step 1: Get raw data from SEC API
-#     print("Step 1: Fetching data from SEC API...")
-#     company_data = extractor.get_company_facts(companies)
-    
-#     # Step 2: Save raw data
-#     print("\nStep 2: Saving raw data...")
-#     extractor.save_raw_data(company_data)
-    
-#     # Step 3: Create chunks for RAG
-#     print("\nStep 3: Creating text chunks for RAG...")
-#     chunks = extractor.create_text_chunks_for_rag(company_data, years)
-    
-#     # Step 4: Save chunks
-#     print("\nStep 4: Saving chunks for RAG pipeline...")
-#     chunks_path = extractor.save_chunks_for_rag(chunks)
-    
-#     print(f"\n✅ Data acquisition complete!")
-#     print(f"📊 Total chunks created: {len(chunks)}")
-#     print(f"📁 Chunks saved to: {chunks_path}")
-    
-#     # Show sample chunks
-#     print("\n📋 Sample chunks:")
-#     for i, chunk in enumerate(chunks[:5]):
-#         print(f"{i+1}. [{chunk['company']} {chunk['year']}] {chunk['content']}")
-    
-#     return chunks
-
-# if __name__ == "__main__":
-#     main()
 
 
