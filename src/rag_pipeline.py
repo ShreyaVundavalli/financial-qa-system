@@ -346,166 +346,480 @@ if __name__ == "__main__":
     print("\n✅ Testing complete!")
 
 
+
+
+
+
+
+
+
+
+# the one with issue3,4,5 resolved - Unified Parsing Strategy,Improved Cleaning and Parsing,Single Source for Both Analysis Types 
+
 # import json
 # import numpy as np
-# from typing import List, Dict, Optional
+# from typing import List, Dict, Optional, Set, Union
 # from dataclasses import dataclass
 # from sentence_transformers import SentenceTransformer
 # import faiss
-# from tqdm import tqdm
+# from rank_bm25 import BM25Okapi
+# import re
+# import os
+# from collections import defaultdict
+
 
 # @dataclass
-# class RetrievalResult:
+# class EnhancedRetrievalResult:
 #     content: str
 #     company: str
 #     year: str
-#     similarity_score: float
-#     chunk_id: int
+#     chunk_id: str
+#     similarity_score: float = 0.0
+#     bm25_score: float = 0.0
+#     combined_score: float = 0.0
+    
+#     # Rich metadata from new data structure
+#     financial_mentions: List[Dict] = None
+#     entity_references: List[str] = None
+#     temporal_markers: List[str] = None
+#     has_financial_data: bool = False
+#     mention_count: int = 0
+    
+#     # Retrieval method used
+#     retrieval_method: str = "semantic"
 
-# class SECFinancialRAG:
+
+# class HybridFinancialRAG:
 #     def __init__(self):
-#         print("🚀 Loading SEC Financial RAG Pipeline...")
+#         print("🚀 Loading Hybrid SEC Financial RAG Pipeline...")
+        
+#         # Semantic search components
 #         self.model = SentenceTransformer('BAAI/bge-base-en-v1.5')
 #         self.embedding_dim = self.model.get_sentence_embedding_dimension()
-#         self.index = faiss.IndexFlatIP(self.embedding_dim)
+#         self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
+        
+#         # Keyword search components
+#         self.bm25_index = None
+#         self.tokenized_docs = []
+        
+#         # Data storage
 #         self.chunks = []
+#         self.chunk_lookup = {}  # For fast ID-based retrieval
+        
 #         print("✅ Ready!")
 
-#     def load_clean_chunks(self, chunks_path: str = "data/rag_chunks.json"):
-#         """Load the clean chunks from SEC API data"""
-#         print(f"📂 Loading chunks from {chunks_path}...")
+
+#     def load_semantic_chunks(self, chunks_path: str = "data/semantic_retrieval_chunks.json"):
+#         """Load semantic chunks from enhanced data acquisition"""
+#         print(f"📂 Loading semantic chunks from {chunks_path}...")
         
 #         try:
 #             with open(chunks_path, 'r') as f:
 #                 raw_chunks = json.load(f)
             
-#             print(f"📊 Loaded {len(raw_chunks)} raw chunks")
+#             print(f"📊 Loaded {len(raw_chunks)} semantic chunks")
             
-#             # Convert to RetrievalResult objects
+#             # Convert to enhanced retrieval results
 #             processed_chunks = []
-#             for i, chunk_data in enumerate(raw_chunks):
-#                 chunk = RetrievalResult(
+#             for chunk_data in raw_chunks:
+#                 chunk = EnhancedRetrievalResult(
 #                     content=chunk_data['content'],
 #                     company=chunk_data['company'],
 #                     year=chunk_data['year'],
-#                     similarity_score=0.0,
-#                     chunk_id=i
+#                     chunk_id=chunk_data['chunk_id'],
+                    
+#                     # Rich metadata
+#                     financial_mentions=chunk_data.get('financial_mentions', []),
+#                     entity_references=chunk_data.get('entity_references', []),
+#                     temporal_markers=chunk_data.get('temporal_markers', []),
+#                     has_financial_data=chunk_data.get('has_financial_data', False),
+#                     mention_count=chunk_data.get('mention_count', 0)
 #                 )
 #                 processed_chunks.append(chunk)
+#                 self.chunk_lookup[chunk.chunk_id] = chunk
             
 #             self.chunks = processed_chunks
-#             print(f"✅ Processed {len(self.chunks)} chunks for RAG")
+#             print(f"✅ Processed {len(self.chunks)} enhanced chunks")
+            
+#             # Show data statistics
+#             companies = set(chunk.company for chunk in self.chunks)
+#             years = set(chunk.year for chunk in self.chunks)
+#             chunks_with_financial = sum(1 for chunk in self.chunks if chunk.has_financial_data)
+            
+#             print(f"📈 Dataset Overview:")
+#             print(f"   Companies: {sorted(companies)}")
+#             print(f"   Years: {sorted(years)}")
+#             print(f"   Chunks with financial data: {chunks_with_financial}/{len(self.chunks)}")
+            
 #             return True
             
 #         except FileNotFoundError:
 #             print(f"❌ Chunks file not found at {chunks_path}")
-#             print("   Please run data_acquisition.py first!")
+#             print("   Please run the enhanced data_acquisition.py first!")
 #             return False
 #         except Exception as e:
 #             print(f"❌ Error loading chunks: {e}")
 #             return False
 
-#     def build_index(self):
-#         """Build vector index from loaded chunks"""
+
+#     def build_semantic_index(self):
+#         """Build FAISS semantic search index"""
 #         if not self.chunks:
-#             print("❌ No chunks loaded! Please run load_clean_chunks() first.")
-#             return
+#             print("❌ No chunks loaded!")
+#             return False
         
-#         print(f"🔄 Creating embeddings for {len(self.chunks)} chunks...")
+#         print(f"🔄 Building semantic index for {len(self.chunks)} chunks...")
         
-#         # Extract text content
-#         texts = [chunk.content for chunk in self.chunks]
+#         # Create searchable text combining content + metadata
+#         texts = []
+#         for chunk in self.chunks:
+#             # Combine content with entity references for richer semantic matching
+#             searchable_text = chunk.content
+#             if chunk.entity_references:
+#                 searchable_text += " " + " ".join(chunk.entity_references)
+#             texts.append(searchable_text)
         
-#         # Generate embeddings in batches
-#         batch_size = 32
+#         # Generate embeddings
 #         embeddings = self.model.encode(
-#             texts, 
-#             batch_size=batch_size,
-#             show_progress_bar=True, 
+#             texts,
+#             batch_size=32,
+#             show_progress_bar=True,
 #             normalize_embeddings=True
 #         )
         
 #         # Build FAISS index
-#         self.index = faiss.IndexFlatIP(self.embedding_dim)
-#         self.index.add(embeddings.astype(np.float32))
+#         self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
+#         self.semantic_index.add(embeddings.astype(np.float32))
         
-#         print("✅ Vector index built successfully!")
+#         print("✅ Semantic index built successfully!")
+#         return True
 
-#     def retrieve(self, query: str, top_k: int = 5, 
-#                  company_filter: Optional[str] = None, 
-#                  year_filter: Optional[str] = None) -> List[RetrievalResult]:
-#         """Retrieve relevant chunks with optional filtering"""
+
+#     def build_keyword_index(self):
+#         """Build BM25 keyword search index"""
 #         if not self.chunks:
-#             print("❌ No chunks available. Please load data first!")
+#             print("❌ No chunks loaded!")
+#             return False
+        
+#         print(f"🔄 Building BM25 keyword index for {len(self.chunks)} chunks...")
+        
+#         # Create searchable documents for BM25
+#         # Include content + financial mentions + entities for comprehensive keyword matching
+#         bm25_docs = []
+#         for chunk in self.chunks:
+#             doc_text = chunk.content
+            
+#             # Add financial mention contexts
+#             if chunk.financial_mentions:
+#                 financial_contexts = [mention.get('context', '') for mention in chunk.financial_mentions]
+#                 doc_text += " " + " ".join(financial_contexts)
+            
+#             # Add entity references
+#             if chunk.entity_references:
+#                 doc_text += " " + " ".join(chunk.entity_references)
+            
+#             # Add temporal markers
+#             if chunk.temporal_markers:
+#                 doc_text += " " + " ".join(chunk.temporal_markers)
+                
+#             bm25_docs.append(doc_text)
+        
+#         # Tokenize documents for BM25
+#         self.tokenized_docs = [doc.lower().split() for doc in bm25_docs]
+        
+#         # Build BM25 index with financial document optimized parameters
+#         self.bm25_index = BM25Okapi(
+#             self.tokenized_docs,
+#             k1=1.2,  # Term frequency saturation parameter
+#             b=0.75   # Document length normalization
+#         )
+        
+#         print("✅ BM25 keyword index built successfully!")
+#         return True
+
+
+#     def semantic_search(self, query: str, top_k: int = 10) -> List[EnhancedRetrievalResult]:
+#         """Pure semantic search"""
+#         if not self.chunks or self.semantic_index.ntotal == 0:
 #             return []
         
 #         # Generate query embedding
 #         query_embedding = self.model.encode([query], normalize_embeddings=True)
         
-#         # Search with extra candidates for filtering
-#         search_k = min(top_k * 3, len(self.chunks))
-#         scores, indices = self.index.search(query_embedding.astype(np.float32), search_k)
+#         # Search
+#         scores, indices = self.semantic_index.search(
+#             query_embedding.astype(np.float32), 
+#             min(top_k, len(self.chunks))
+#         )
         
 #         results = []
 #         for score, idx in zip(scores[0], indices[0]):
 #             chunk = self.chunks[idx]
-            
-#             # Apply company filter
-#             if company_filter and chunk.company.upper() != company_filter.upper():
-#                 continue
-            
-#             # Apply year filter
-#             if year_filter and str(chunk.year) != str(year_filter):
-#                 continue
-            
-#             # Update similarity score
-#             chunk.similarity_score = float(score)
-#             results.append(chunk)
-            
-#             if len(results) >= top_k:
-#                 break
+#             result = EnhancedRetrievalResult(**chunk.__dict__)
+#             result.similarity_score = float(score)
+#             result.combined_score = float(score)  # FIX 1: Set combined = semantic for pure semantic
+#             result.retrieval_method = "semantic"
+#             results.append(result)
         
 #         return results
 
-#     def initialize(self, chunks_path: str = "data/rag_chunks.json"):
-#         """Complete initialization: load chunks and build index"""
-#         success = self.load_clean_chunks(chunks_path)
-#         if success:
-#             self.build_index()
-#             return True
-#         return False
 
-# # Test the new pipeline
+#     def keyword_search(self, query: str, top_k: int = 10) -> List[EnhancedRetrievalResult]:
+#         """Pure BM25 keyword search"""
+#         if not self.chunks or not self.bm25_index:
+#             return []
+        
+#         # Tokenize query
+#         query_tokens = query.lower().split()
+        
+#         # Get BM25 scores
+#         bm25_scores = self.bm25_index.get_scores(query_tokens)
+        
+#         # Get top-k results
+#         top_indices = np.argsort(bm25_scores)[::-1][:top_k]
+        
+#         results = []
+#         for idx in top_indices:
+#             if bm25_scores[idx] > 0:  # Only include relevant results
+#                 chunk = self.chunks[idx]
+#                 result = EnhancedRetrievalResult(**chunk.__dict__)
+#                 result.bm25_score = float(bm25_scores[idx])
+#                 result.combined_score = float(bm25_scores[idx])  # FIX 1: Set combined = BM25 for pure keyword
+#                 result.retrieval_method = "keyword"
+#                 results.append(result)
+        
+#         return results
+
+
+#     def hybrid_search(self, query: str, top_k: int = 10, 
+#                      semantic_weight: float = 0.6, keyword_weight: float = 0.4) -> List[EnhancedRetrievalResult]:
+#         """Hybrid search combining semantic and keyword approaches"""
+        
+#         # Get results from both methods
+#         semantic_results = self.semantic_search(query, top_k * 2)
+#         keyword_results = self.keyword_search(query, top_k * 2)
+        
+#         # Create lookup for combining scores
+#         chunk_scores = {}
+        
+#         # Add semantic scores
+#         for result in semantic_results:
+#             chunk_scores[result.chunk_id] = {
+#                 'chunk': result,
+#                 'semantic_score': result.similarity_score,
+#                 'keyword_score': 0.0
+#             }
+        
+#         # Add keyword scores
+#         for result in keyword_results:
+#             if result.chunk_id in chunk_scores:
+#                 chunk_scores[result.chunk_id]['keyword_score'] = result.bm25_score
+#             else:
+#                 chunk_scores[result.chunk_id] = {
+#                     'chunk': result,
+#                     'semantic_score': 0.0,
+#                     'keyword_score': result.bm25_score
+#                 }
+        
+#         # Normalize and combine scores
+#         if chunk_scores:
+#             # Normalize semantic scores (0-1 range)
+#             semantic_scores = [data['semantic_score'] for data in chunk_scores.values()]
+#             max_semantic = max(semantic_scores) if semantic_scores else 1
+            
+#             # Normalize keyword scores (0-1 range)  
+#             keyword_scores = [data['keyword_score'] for data in chunk_scores.values()]
+#             max_keyword = max(keyword_scores) if keyword_scores else 1
+            
+#             # Calculate combined scores
+#             combined_results = []
+#             for chunk_id, data in chunk_scores.items():
+#                 result = EnhancedRetrievalResult(**data['chunk'].__dict__)
+                
+#                 # Normalize scores
+#                 norm_semantic = data['semantic_score'] / max_semantic if max_semantic > 0 else 0
+#                 norm_keyword = data['keyword_score'] / max_keyword if max_keyword > 0 else 0
+                
+#                 # Combine scores
+#                 result.similarity_score = norm_semantic
+#                 result.bm25_score = norm_keyword
+#                 result.combined_score = (semantic_weight * norm_semantic) + (keyword_weight * norm_keyword)
+#                 result.retrieval_method = "hybrid"
+                
+#                 combined_results.append(result)
+            
+#             # Sort by combined score
+#             combined_results.sort(key=lambda x: x.combined_score, reverse=True)
+#             return combined_results[:top_k]
+        
+#         return []
+
+
+#     def apply_filters(self, results: List[EnhancedRetrievalResult], 
+#                      company_filter: Optional[str] = None,
+#                      year_filter: Optional[str] = None,
+#                      has_financial_filter: Optional[bool] = None) -> List[EnhancedRetrievalResult]:
+#         """Apply metadata filters to results"""
+        
+#         filtered = results
+        
+#         # Company filter
+#         if company_filter:
+#             company_upper = company_filter.upper()
+#             filtered = [r for r in filtered if r.company.upper() == company_upper]
+        
+#         # Year filter
+#         if year_filter:
+#             year_str = str(year_filter)
+#             filtered = [r for r in filtered if str(r.year) == year_str]
+        
+#         # Financial data filter
+#         if has_financial_filter is not None:
+#             filtered = [r for r in filtered if r.has_financial_data == has_financial_filter]
+        
+#         return filtered
+
+
+#     def smart_retrieve(self, query: str, top_k: int = 5, method: str = "auto") -> List[EnhancedRetrievalResult]:
+#         """Intelligent retrieval with automatic method selection"""
+        
+#         if not self.chunks:
+#             print("❌ No chunks available!")
+#             return []
+        
+#         query_lower = query.lower()
+        
+#         # Auto-detect optimal retrieval method
+#         if method == "auto":
+#             # FIX 2: More selective keyword triggers - only when company + year together
+#             exact_patterns = [
+#                 r'\b\d+\.?\d*%\b',  # Percentages
+#                 r'\$[\d,\.]+',      # Dollar amounts  
+#                 r'\b(MSFT|GOOGL|NVDA)\s+(202[0-4])\b',  # Company + Year together
+#                 r'\b(clause|section)\s+\d+'  # Clauses/sections
+#             ]
+            
+#             if any(re.search(pattern, query, re.IGNORECASE) for pattern in exact_patterns):
+#                 method = "keyword"
+#                 print(f"🔍 Auto-selected: keyword search (detected exact terms)")
+#             else:
+#                 method = "hybrid"
+#                 print(f"🔍 Auto-selected: hybrid search")
+        
+#         # Auto-detect filters from query
+#         company_filter = None
+#         year_filter = None
+        
+#         # Detect company
+#         company_hints = {
+#             'microsoft': 'MSFT', 'msft': 'MSFT',
+#             'google': 'GOOGL', 'googl': 'GOOGL', 'alphabet': 'GOOGL',
+#             'nvidia': 'NVDA', 'nvda': 'NVDA'
+#         }
+        
+#         for hint, company in company_hints.items():
+#             if hint in query_lower:
+#                 company_filter = company
+#                 break
+        
+#         # Detect year
+#         year_match = re.search(r'\b(202[0-4])\b', query)
+#         if year_match:
+#             year_filter = year_match.group(1)
+        
+#         print(f"🔍 Query analysis: company={company_filter}, year={year_filter}")
+        
+#         # Execute search based on method
+#         if method == "semantic":
+#             results = self.semantic_search(query, top_k * 3)
+#         elif method == "keyword":
+#             results = self.keyword_search(query, top_k * 3)
+#         elif method == "hybrid":
+#             results = self.hybrid_search(query, top_k * 3)
+#         else:
+#             raise ValueError(f"Unknown method: {method}")
+        
+#         # Apply detected filters
+#         filtered_results = self.apply_filters(
+#             results, 
+#             company_filter=company_filter, 
+#             year_filter=year_filter
+#         )
+        
+#         return filtered_results[:top_k]
+
+
+#     def retrieve_for_agent(self, query: str, top_k: int = 3) -> List[Dict]:
+#         """Simplified retrieval method for agent use"""
+#         results = self.smart_retrieve(query, top_k=top_k)
+#         return [
+#             {
+#                 'content': r.content,
+#                 'company': r.company,
+#                 'year': r.year,
+#                 'score': r.combined_score,
+#                 'financial_mentions': r.financial_mentions,
+#                 'source': f"{r.company}_{r.year}_chunk_{r.chunk_id.split('_')[-1]}"
+#             }
+#             for r in results
+#         ]
+
+#     def initialize(self, chunks_path: str = "data/semantic_retrieval_chunks.json"):
+#         """Complete initialization: load data and build all indices"""
+#         print("🚀 Initializing Hybrid Financial RAG...")
+        
+#         # Load data
+#         if not self.load_semantic_chunks(chunks_path):
+#             return False
+        
+#         # Build indices
+#         semantic_success = self.build_semantic_index()
+#         keyword_success = self.build_keyword_index()
+        
+#         if semantic_success and keyword_success:
+#             print("\n✅ Hybrid RAG pipeline initialized successfully!")
+#             print(f"🔍 Available methods: semantic, keyword, hybrid, auto")
+#             print(f"🏷️  Available filters: company, year, has_financial_data")
+#             return True
+#         else:
+#             print("❌ Failed to build indices")
+#             return False
+
+
+# # Test the hybrid pipeline
 # if __name__ == "__main__":
-#     print("🧪 Testing SEC Financial RAG Pipeline\n")
+#     print("🧪 Testing Hybrid Financial RAG Pipeline\n")
     
-#     # Initialize pipeline
-#     rag = SECFinancialRAG()
+#     # Initialize
+#     rag = HybridFinancialRAG()
     
-#     # Load data and build index
 #     if not rag.initialize():
-#         print("❌ Failed to initialize RAG pipeline")
+#         print("❌ Failed to initialize")
 #         exit(1)
     
-#     # Test queries
+#     # Test different search methods
 #     test_queries = [
-#         "Microsoft total revenue 2023",
-#         "NVIDIA revenue 2024", 
-#         "Google operating income 2023"
+#         "Microsoft cloud revenue 2023",  # Should auto-select hybrid (no longer triggers keyword)
+#         "margin 64.9 %",        # Should auto-select keyword  
+#         "AI strategy investments",       # Should auto-select hybrid
+#         "NVDA revenue growth 2024",      # Should auto-select hybrid (no longer triggers keyword)
+#         "MSFT 2023",                     # Should auto-select keyword (company + year together)
 #     ]
     
-#     print("\n" + "="*50)
-#     print("🔍 TESTING CLEAN DATA RETRIEVAL")
-#     print("="*50)
+#     print("\n" + "="*70)
+#     print("🔍 TESTING SMART RETRIEVAL (Auto Method Selection)")
+#     print("="*70)
     
 #     for query in test_queries:
 #         print(f"\n❓ Query: {query}")
-#         print("-" * 40)
+#         print("-" * 60)
         
-#         results = rag.retrieve(query, top_k=3)
+#         results = rag.smart_retrieve(query, top_k=3)
         
 #         for i, result in enumerate(results, 1):
-#             print(f"{i}. [{result.company} {result.year}] Score: {result.similarity_score:.3f}")
-#             print(f"   {result.content}")
+#             print(f"{i}. [{result.company} {result.year}] Method: {result.retrieval_method}")
+#             print(f"   Scores: Semantic={result.similarity_score:.3f}, BM25={result.bm25_score:.3f}, Combined={result.combined_score:.3f}")
+#             print(f"   Financial: {result.mention_count} mentions, Entities: {result.entity_references[:3]}")
+#             print(f"   Content: {result.content[:150]}...")
     
-#     print("\n✅ Testing complete!")
+#     print(f"\n✅ Hybrid RAG testing complete!")
